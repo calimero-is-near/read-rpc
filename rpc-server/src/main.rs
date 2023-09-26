@@ -77,7 +77,10 @@ async fn main() -> anyhow::Result<()> {
 
     let near_rpc_client = near_jsonrpc_client::JsonRpcClient::connect(opts.rpc_url.to_string());
     // We want to set a custom referer to let NEAR JSON RPC nodes know that we are a read-rpc instance
-    let near_rpc_client = near_rpc_client.header(("Referer", "read-rpc"))?; // TODO: make it configurable
+    let mut near_rpc_client = near_rpc_client.header(("Referer", "read-rpc"))?; // TODO: make it configurable
+    if let Some(key) = &opts.rpc_api_key {
+        near_rpc_client = near_rpc_client.header(("x-api-key", key))?;
+    }
     let blocks_cache = std::sync::Arc::new(std::sync::RwLock::new(lru::LruCache::new(
         std::num::NonZeroUsize::new(100000).unwrap(),
     )));
@@ -120,6 +123,8 @@ async fn main() -> anyhow::Result<()> {
         .await?;
     let lake_config = opts.to_lake_config(final_block.block_height).await?;
     let s3_config = opts.to_s3_config().await;
+    
+    println!("{:?}\n{:?}", s3_config, lake_config);
 
     let state = ServerContext {
         s3_client: near_lake_framework::s3_fetchers::LakeS3Client::new(

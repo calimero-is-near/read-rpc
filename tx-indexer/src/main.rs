@@ -50,6 +50,7 @@ async fn main() -> anyhow::Result<()> {
     tokio::spawn(metrics::state_logger(
         std::sync::Arc::clone(&stats),
         opts.rpc_url().to_string(),
+        opts.rpc_api_key,
     ));
 
     tracing::info!(target: INDEXER, "Starting tx indexer...",);
