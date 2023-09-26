@@ -22,6 +22,31 @@ use tracing_subscriber::util::SubscriberInitExt;
     setting(clap::AppSettings::NextLineHelp)
 )]
 pub(crate) struct Opts {
+    // near network rpc url
+    #[clap(long, env = "NEAR_RPC_URL")]
+    pub rpc_url: String,
+    // near network rpc url
+    #[clap(long, env = "NEAR_RPC_API_KEY")]
+    pub rpc_api_key: Option<String>,
+    // AWS endpoint
+    #[clap(long, env = "AWS_ENDPOINT")]
+    pub endpoint: String,
+
+    // AWS access key id
+    #[clap(long, env = "AWS_ACCESS_KEY_ID")]
+    pub access_key_id: String,
+
+    // AWS secret access key
+    #[clap(long, env = "AWS_SECRET_ACCESS_KEY")]
+    pub secret_access_key: String,
+
+    // AWS default region
+    #[clap(long, env = "AWS_DEFAULT_REGION")]
+    pub region: String,
+    // Indexer bucket name
+    #[clap(long, env = "AWS_BUCKET_NAME")]
+    pub s3_bucket_name: String,
+
     /// Indexer ID to handle meta data about the instance
     #[clap(long, env)]
     pub indexer_id: String,
@@ -76,6 +101,8 @@ pub enum ChainId {
     Mainnet(StartOptions),
     #[clap(subcommand)]
     Testnet(StartOptions),
+    #[clap(subcommand)]
+    Calimero(StartOptions),
 }
 
 #[allow(clippy::enum_variant_names)]
@@ -95,7 +122,7 @@ impl Opts {
     /// Returns [StartOptions] for current [Opts]
     pub fn start_options(&self) -> &StartOptions {
         match &self.chain_id {
-            ChainId::Mainnet(start_options) | ChainId::Testnet(start_options) => start_options,
+            ChainId::Mainnet(start_options) | ChainId::Testnet(start_options) | ChainId::Calimero(start_options) => start_options,
         }
     }
 
@@ -103,11 +130,27 @@ impl Opts {
         match self.chain_id {
             ChainId::Mainnet(_) => "https://rpc.mainnet.near.org",
             ChainId::Testnet(_) => "https://rpc.testnet.near.org",
+            ChainId::Calimero(_) => &self.rpc_url,
         }
     }
 }
 
 impl Opts {
+    pub async fn to_s3_config(&self) -> aws_sdk_s3::Config {
+        let credentials = aws_credential_types::Credentials::new(
+            &self.access_key_id,
+            &self.secret_access_key,
+            None,
+            None,
+            "",
+        );
+        aws_sdk_s3::Config::builder()
+            .credentials_provider(credentials)
+            .region(aws_sdk_s3::Region::new(self.region.clone()))
+            .endpoint_url(&self.endpoint)
+            .build()
+    }
+
     pub async fn to_lake_config(
         &self,
         start_block_height: u64,
@@ -120,7 +163,12 @@ impl Opts {
                 .start_block_height(start_block_height),
             ChainId::Testnet(_) => config_builder
                 .testnet()
-                .start_block_height(start_block_height),
+                .start_block_height(get_start_block_height(self, scylladb_session).await?),
+            ChainId::Calimero(_) => config_builder
+                .s3_config(self.to_s3_config().await)
+                .s3_region_name(&self.region)
+                .s3_bucket_name(&self.s3_bucket_name)
+                .start_block_height(get_start_block_height(self, scylladb_session).await?)
         }
         .build()
         .expect("Failed to build LakeConfig"))
@@ -152,15 +200,19 @@ pub(crate) async fn get_start_block_height(
                 if let Some(height) = height {
                     return Ok(*height);
                 }
-                Ok(final_block_height(opts.rpc_url()).await?)
+                Ok(final_block_height(opts.rpc_url(), &opts.rpc_api_key).await?)
             }
         }
-        StartOptions::FromLatest => Ok(final_block_height(opts.rpc_url()).await?),
+        StartOptions::FromLatest => Ok(final_block_height(opts.rpc_url(), &opts.rpc_api_key).await?),
     }
 }
 
-pub async fn final_block_height(rpc_url: &str) -> anyhow::Result<u64> {
-    let client = JsonRpcClient::connect(rpc_url.to_string());
+pub async fn final_block_height(rpc_url: &str, rpc_api_key: &Option<String>) -> anyhow::Result<u64> {
+    let mut client = JsonRpcClient::connect(rpc_url.to_string());
+    if let Some(key) = rpc_api_key {
+        client = client.header(("x-api-key", key))?;
+    }
+
     let request = methods::block::RpcBlockRequest {
         block_reference: BlockReference::Finality(Finality::Final),
     };

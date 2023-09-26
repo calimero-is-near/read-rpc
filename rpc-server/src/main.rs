@@ -78,8 +78,10 @@ async fn main() -> anyhow::Result<()> {
 
     let near_rpc_client = near_jsonrpc_client::JsonRpcClient::connect(opts.rpc_url.to_string());
     // We want to set a custom referer to let NEAR JSON RPC nodes know that we are a read-rpc instance
-    let near_rpc_client = near_rpc_client.header(("Referer", "read-rpc"))?; // TODO: make it configurable
-
+    let mut near_rpc_client = near_rpc_client.header(("Referer", "read-rpc"))?; // TODO: make it configurable
+    if let Some(key) = &opts.rpc_api_key {
+        near_rpc_client = near_rpc_client.header(("x-api-key", key))?;
+    }
     let final_block = get_final_cache_block(&near_rpc_client)
         .await
         .expect("Error to get final block");
