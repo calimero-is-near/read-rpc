@@ -7,6 +7,9 @@ pub struct Opts {
     // near network rpc url
     #[clap(long, env = "NEAR_RPC_URL")]
     pub rpc_url: http::Uri,
+    // near network rpc url
+    #[clap(long, env = "NEAR_RPC_API_KEY")]
+    pub rpc_api_key: Option<String>,
 
     // Indexer bucket name
     #[clap(long, env = "AWS_BUCKET_NAME")]
@@ -33,6 +36,10 @@ pub struct Opts {
     /// ScyllaDB keepalive interval
     #[clap(long, env, default_value = "60")]
     pub scylla_keepalive_interval: u64,
+
+    // AWS endpoint
+    #[clap(long, env = "AWS_ENDPOINT")]
+    pub endpoint: String,
 
     // AWS access key id
     #[clap(long, env = "AWS_ACCESS_KEY_ID")]
@@ -78,6 +85,7 @@ impl Opts {
         aws_sdk_s3::Config::builder()
             .credentials_provider(credentials)
             .region(aws_sdk_s3::Region::new(self.region.clone()))
+            .endpoint_url(&self.endpoint)
             .build()
     }
 

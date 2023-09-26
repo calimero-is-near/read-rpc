@@ -264,7 +264,7 @@ async fn main() -> anyhow::Result<()> {
     tokio::spawn(metrics::init_server(opts.port).expect("Failed to start metrics server"));
 
     let stats = std::sync::Arc::new(tokio::sync::RwLock::new(metrics::Stats::new()));
-    tokio::spawn(metrics::state_logger(std::sync::Arc::clone(&stats), opts.rpc_url().to_string()));
+    tokio::spawn(metrics::state_logger(std::sync::Arc::clone(&stats), opts.rpc_url().to_string(), opts.rpc_api_key));
 
     let mut handlers = tokio_stream::wrappers::ReceiverStream::new(stream)
         .map(|streamer_message| {
