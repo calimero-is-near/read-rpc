@@ -123,8 +123,6 @@ async fn main() -> anyhow::Result<()> {
         .await?;
     let lake_config = opts.to_lake_config(final_block.block_height).await?;
     let s3_config = opts.to_s3_config().await;
-    
-    println!("{:?}\n{:?}", s3_config, lake_config);
 
     let state = ServerContext {
         s3_client: near_lake_framework::s3_fetchers::LakeS3Client::new(
