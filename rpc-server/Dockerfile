@@ -1,4 +1,4 @@
-FROM rustlang/rust:nightly AS builder
+FROM rust:1.69 AS builder
 ARG features="tracing-instrumentation,shadow_data_consistency"
 WORKDIR /tmp/
 
@@ -13,7 +13,7 @@ RUN mkdir rpc-server/src && echo 'fn main() {}' > rpc-server/src/main.rs cargo b
 COPY rpc-server/src ./rpc-server/src
 
 # build for release
-RUN cargo build --release --no-default-features --features "$features" -Z sparse-registry
+RUN cargo build --release --no-default-features --features "$features"
 
 FROM ubuntu:20.04
 RUN apt update && apt install -yy openssl ca-certificates
