@@ -1,4 +1,4 @@
-FROM rust:1.69 AS builder
+FROM rustlang/rust:nightly AS builder
 ARG features="tracing-instrumentation,shadow_data_consistency"
 WORKDIR /tmp/
 
