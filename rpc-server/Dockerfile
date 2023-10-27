@@ -18,4 +18,4 @@ RUN cargo build --release --no-default-features --features "$features"
 FROM ubuntu:20.04
 RUN apt update && apt install -yy openssl ca-certificates
 COPY --from=builder /tmp/target/release/read-rpc-server .
-ENTRYPOINT ["./read-rpc-server", "calimero", "from-interruption"]
+ENTRYPOINT ["./read-rpc-server"]
