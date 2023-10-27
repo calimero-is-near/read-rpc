@@ -17,4 +17,5 @@ RUN cargo build --release --features "$features"
 FROM ubuntu:20.04
 RUN apt update && apt install -yy openssl ca-certificates
 COPY --from=builder /tmp/target/release/state-indexer .
+EXPOSE 8080
 ENTRYPOINT ["./state-indexer", "calimero", "from-interruption"]

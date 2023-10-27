@@ -18,4 +18,5 @@ RUN cargo build --release --no-default-features --features "$features"
 FROM ubuntu:20.04
 RUN apt update && apt install -yy openssl ca-certificates
 COPY --from=builder /tmp/target/release/read-rpc-server .
+EXPOSE 8080
 ENTRYPOINT ["./read-rpc-server"]
