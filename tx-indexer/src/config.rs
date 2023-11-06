@@ -122,7 +122,9 @@ impl Opts {
     /// Returns [StartOptions] for current [Opts]
     pub fn start_options(&self) -> &StartOptions {
         match &self.chain_id {
-            ChainId::Mainnet(start_options) | ChainId::Testnet(start_options) | ChainId::Calimero(start_options) => start_options,
+            ChainId::Mainnet(start_options)
+            | ChainId::Testnet(start_options)
+            | ChainId::Calimero(start_options) => start_options,
         }
     }
 
@@ -163,12 +165,12 @@ impl Opts {
                 .start_block_height(start_block_height),
             ChainId::Testnet(_) => config_builder
                 .testnet()
-                .start_block_height(get_start_block_height(self, scylladb_session).await?),
+                .start_block_height(start_block_height),
             ChainId::Calimero(_) => config_builder
                 .s3_config(self.to_s3_config().await)
                 .s3_region_name(&self.region)
                 .s3_bucket_name(&self.s3_bucket_name)
-                .start_block_height(get_start_block_height(self, scylladb_session).await?)
+                .start_block_height(start_block_height),
         }
         .build()
         .expect("Failed to build LakeConfig"))
@@ -203,11 +205,16 @@ pub(crate) async fn get_start_block_height(
                 Ok(final_block_height(opts.rpc_url(), &opts.rpc_api_key).await?)
             }
         }
-        StartOptions::FromLatest => Ok(final_block_height(opts.rpc_url(), &opts.rpc_api_key).await?),
+        StartOptions::FromLatest => {
+            Ok(final_block_height(opts.rpc_url(), &opts.rpc_api_key).await?)
+        }
     }
 }
 
-pub async fn final_block_height(rpc_url: &str, rpc_api_key: &Option<String>) -> anyhow::Result<u64> {
+pub async fn final_block_height(
+    rpc_url: &str,
+    rpc_api_key: &Option<String>,
+) -> anyhow::Result<u64> {
     let mut client = JsonRpcClient::connect(rpc_url.to_string());
     if let Some(key) = rpc_api_key {
         client = client.header(("x-api-key", key))?;
