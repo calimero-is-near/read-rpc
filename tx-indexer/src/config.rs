@@ -122,9 +122,7 @@ impl Opts {
     /// Returns [StartOptions] for current [Opts]
     pub fn start_options(&self) -> &StartOptions {
         match &self.chain_id {
-            ChainId::Mainnet(start_options)
-            | ChainId::Testnet(start_options)
-            | ChainId::Calimero(start_options) => start_options,
+            ChainId::Mainnet(start_options) | ChainId::Testnet(start_options) | ChainId::Calimero(start_options) => start_options
         }
     }
 

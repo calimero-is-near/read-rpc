@@ -82,6 +82,7 @@ async fn main() -> anyhow::Result<()> {
     if let Some(key) = &opts.rpc_api_key {
         near_rpc_client = near_rpc_client.header(("x-api-key", key))?;
     }
+
     let final_block = get_final_cache_block(&near_rpc_client)
         .await
         .expect("Error to get final block");
