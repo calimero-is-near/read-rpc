@@ -15,12 +15,13 @@ use crate::utils::proxy_rpc_call;
 use near_primitives::trie_key::TrieKey;
 use near_primitives::views::StateChangeValueView;
 
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-static mut LAST_REQUEST: u128 = 0;
-static mut FALLBACK_TO_RPC: bool = false;
+static LAST_REQUEST: AtomicU64 = AtomicU64::new(0);
+static FALLBACK_TO_RPC: AtomicBool = AtomicBool::new(false);
 
-const CHECK_SYNC_INTERVAL_MILLIS: u128 = 10_000;
+const CHECK_SYNC_INTERVAL_MILLIS: u64 = 10_000;
 // ~5 seconds, transaction_validity_period is 100
 const BLOCKS_DIFF_IN_SYNC: BlockHeight = 25;
 
@@ -52,49 +53,53 @@ pub async fn block(
                 let block_view = proxy_rpc_call(&data.near_rpc_client, params).await?;
                 Ok(near_jsonrpc_primitives::types::blocks::RpcBlockResponse { block_view })
             } else {
-                unsafe {
-                    let current_time_millis = SystemTime::now()
-                        .duration_since(UNIX_EPOCH)
-                        .expect("Time went backwards")
-                        .as_millis();
+                let current_time_millis = SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .expect("Time went backwards")
+                    .as_millis() as u64;
 
-                    if LAST_REQUEST == 0
-                        || current_time_millis - LAST_REQUEST > CHECK_SYNC_INTERVAL_MILLIS
+                if LAST_REQUEST.load(Ordering::Acquire) == 0
+                    || current_time_millis - LAST_REQUEST.load(Ordering::Acquire)
+                        > CHECK_SYNC_INTERVAL_MILLIS
+                {
+                    println!("CHECK SYNC {}", current_time_millis);
+                    let rpc_block_view = proxy_rpc_call(
+                        &data.near_rpc_client,
+                        near_jsonrpc_primitives::types::blocks::RpcBlockRequest {
+                            block_reference: near_primitives::types::BlockReference::Finality(
+                                near_primitives::types::Finality::Final,
+                            ),
+                        },
+                    )
+                    .await?;
+                    let lake_block_view = block_call(data, Params(params)).await?.block_view;
+
+                    println!(
+                        "CMP {} {} {}",
+                        rpc_block_view.header.height,
+                        lake_block_view.header.height + BLOCKS_DIFF_IN_SYNC,
+                        lake_block_view.header.height
+                    );
+                    LAST_REQUEST.store(current_time_millis, Ordering::Release);
+
+                    if rpc_block_view.header.height
+                        > lake_block_view.header.height + BLOCKS_DIFF_IN_SYNC
                     {
-                        println!("CHECK SYNC {}", current_time_millis);
-                        LAST_REQUEST = current_time_millis;
-                        let rpc_block_view = proxy_rpc_call(
-                            &data.near_rpc_client,
-                            near_jsonrpc_primitives::types::blocks::RpcBlockRequest {
-                                block_reference: near_primitives::types::BlockReference::Finality(
-                                    near_primitives::types::Finality::Final,
-                                ),
-                            },
-                        )
-                        .await?;
-                        let lake_block_view = block_call(data, Params(params)).await?.block_view;
-
-                        println!("CMP {} {} {}", rpc_block_view.header.height, lake_block_view.header.height + BLOCKS_DIFF_IN_SYNC, lake_block_view.header.height);
-
-                        if rpc_block_view.header.height
-                            > lake_block_view.header.height + BLOCKS_DIFF_IN_SYNC
-                        {
-                            FALLBACK_TO_RPC = true;
-                            Ok(near_jsonrpc_primitives::types::blocks::RpcBlockResponse {
-                                block_view: rpc_block_view,
-                            })
-                        } else {
-                            FALLBACK_TO_RPC = false;
-                            Ok(near_jsonrpc_primitives::types::blocks::RpcBlockResponse {
-                                block_view: lake_block_view,
-                            })
-                        }
-                    } else if FALLBACK_TO_RPC {
-                        let block_view = proxy_rpc_call(&data.near_rpc_client, params).await?;
-                        Ok(near_jsonrpc_primitives::types::blocks::RpcBlockResponse { block_view })
+                        FALLBACK_TO_RPC.store(true, Ordering::Release);
+                        Ok(near_jsonrpc_primitives::types::blocks::RpcBlockResponse {
+                            block_view: rpc_block_view,
+                        })
                     } else {
-                        block_call(data, Params(params)).await
+                        FALLBACK_TO_RPC.store(false, Ordering::Release);
+                        Ok(near_jsonrpc_primitives::types::blocks::RpcBlockResponse {
+                            block_view: lake_block_view,
+                        })
                     }
+                } else if FALLBACK_TO_RPC.load(Ordering::Acquire) {
+                    let block_view = proxy_rpc_call(&data.near_rpc_client, params).await?;
+                    Ok(near_jsonrpc_primitives::types::blocks::RpcBlockResponse { block_view })
+                } else {
+                    block_call(data, Params(params)).await
                 }
             }
         }
