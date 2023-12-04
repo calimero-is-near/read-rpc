@@ -9,10 +9,21 @@ use crate::modules::blocks::utils::{
 #[cfg(feature = "shadow_data_consistency")]
 use crate::utils::shadow_compare_results;
 use jsonrpc_v2::{Data, Params};
+use near_primitives_core::types::BlockHeight;
 
 use crate::utils::proxy_rpc_call;
 use near_primitives::trie_key::TrieKey;
 use near_primitives::views::StateChangeValueView;
+
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::time::{SystemTime, UNIX_EPOCH};
+
+static LAST_REQUEST: AtomicU64 = AtomicU64::new(0);
+static FALLBACK_TO_RPC: AtomicBool = AtomicBool::new(false);
+
+const CHECK_SYNC_INTERVAL_MILLIS: u64 = 10_000;
+// ~5 seconds, transaction_validity_period is 100
+const BLOCKS_DIFF_IN_SYNC: BlockHeight = 25;
 
 /// `block` rpc method implementation
 /// calls proxy_rpc_call to get `block` from near-rpc if request parameters not supported by read-rpc
@@ -42,7 +53,54 @@ pub async fn block(
                 let block_view = proxy_rpc_call(&data.near_rpc_client, params).await?;
                 Ok(near_jsonrpc_primitives::types::blocks::RpcBlockResponse { block_view })
             } else {
-                block_call(data, Params(params)).await
+                let current_time_millis = SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .expect("Time went backwards")
+                    .as_millis() as u64;
+
+                if LAST_REQUEST.load(Ordering::Acquire) == 0
+                    || current_time_millis - LAST_REQUEST.load(Ordering::Acquire)
+                        > CHECK_SYNC_INTERVAL_MILLIS
+                {
+                    println!("CHECK SYNC {}", current_time_millis);
+                    let rpc_block_view = proxy_rpc_call(
+                        &data.near_rpc_client,
+                        near_jsonrpc_primitives::types::blocks::RpcBlockRequest {
+                            block_reference: near_primitives::types::BlockReference::Finality(
+                                near_primitives::types::Finality::Final,
+                            ),
+                        },
+                    )
+                    .await?;
+                    let lake_block_view = block_call(data, Params(params)).await?.block_view;
+
+                    println!(
+                        "CMP {} {} {}",
+                        rpc_block_view.header.height,
+                        lake_block_view.header.height + BLOCKS_DIFF_IN_SYNC,
+                        lake_block_view.header.height
+                    );
+                    LAST_REQUEST.store(current_time_millis, Ordering::Release);
+
+                    if rpc_block_view.header.height
+                        > lake_block_view.header.height + BLOCKS_DIFF_IN_SYNC
+                    {
+                        FALLBACK_TO_RPC.store(true, Ordering::Release);
+                        Ok(near_jsonrpc_primitives::types::blocks::RpcBlockResponse {
+                            block_view: rpc_block_view,
+                        })
+                    } else {
+                        FALLBACK_TO_RPC.store(false, Ordering::Release);
+                        Ok(near_jsonrpc_primitives::types::blocks::RpcBlockResponse {
+                            block_view: lake_block_view,
+                        })
+                    }
+                } else if FALLBACK_TO_RPC.load(Ordering::Acquire) {
+                    let block_view = proxy_rpc_call(&data.near_rpc_client, params).await?;
+                    Ok(near_jsonrpc_primitives::types::blocks::RpcBlockResponse { block_view })
+                } else {
+                    block_call(data, Params(params)).await
+                }
             }
         }
         near_primitives::types::BlockReference::BlockId(_) => {
