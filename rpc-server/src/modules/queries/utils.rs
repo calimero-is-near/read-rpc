@@ -166,26 +166,13 @@ async fn run_code_in_vm_runner(
     let code_cache = std::sync::Arc::clone(compiled_contract_code_cache);
 
     let results = task::spawn_blocking(move || {
-        // We use our own cache to store the precompiled codes,
-        // so we need to call the precompilation function manually.
-        //
-        // Precompiles contract for the current default VM, and stores result to the cache.
-        // Returns `Ok(true)` if compiled code was added to the cache, and `Ok(false)` if element
-        // is already in the cache, or if cache is `None`.
-        near_vm_runner::precompile_contract(
-            &contract_code,
-            &near_vm_logic::VMConfig::test(),
-            latest_protocol_version,
-            Some(code_cache.deref()),
-        )
-        .ok();
         near_vm_runner::run(
             &contract_code,
             &contract_method_name,
             &mut external,
             context,
-            &near_vm_logic::VMConfig::test(),
-            &near_primitives_core::runtime::fees::RuntimeFeesConfig::test(),
+            &near_vm_logic::VMConfig::free(),
+            &near_primitives_core::runtime::fees::RuntimeFeesConfig::free(),
             &[],
             latest_protocol_version,
             Some(code_cache.deref()),
@@ -238,7 +225,11 @@ async fn run_code_in_vm_runner(
 #[allow(clippy::too_many_arguments)]
 #[cfg_attr(
     feature = "tracing-instrumentation",
-    tracing::instrument(skip(scylla_db_manager, compiled_contract_code_cache))
+    tracing::instrument(skip(
+        scylla_db_manager,
+        compiled_contract_code_cache,
+        contract_code_cache
+    ))
 )]
 pub async fn run_contract(
     account_id: near_primitives::types::AccountId,
@@ -247,7 +238,7 @@ pub async fn run_contract(
     scylla_db_manager: std::sync::Arc<ScyllaDBManager>,
     compiled_contract_code_cache: &std::sync::Arc<CompiledCodeCache>,
     contract_code_cache: &std::sync::Arc<
-        std::sync::RwLock<lru::LruCache<near_primitives::hash::CryptoHash, Vec<u8>>>,
+        std::sync::RwLock<crate::cache::LruMemoryCache<near_primitives::hash::CryptoHash, Vec<u8>>>,
     >,
     block: crate::modules::blocks::CacheBlock,
     max_gas_burnt: near_primitives_core::types::Gas,

@@ -1,5 +1,6 @@
-use crate::config::CompiledCodeCache;
-use crate::utils::get_final_cache_block;
+use crate::utils::{
+    get_final_cache_block, gigabytes_to_bytes, update_final_block_height_regularly,
+};
 use clap::Parser;
 use config::{Opts, ServerContext};
 use database::ScyllaStorageManager;
@@ -7,11 +8,11 @@ use dotenv::dotenv;
 use jsonrpc_v2::{Data, Server};
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
-use utils::update_final_block_height_regularly;
 
 #[macro_use]
 extern crate lazy_static;
 
+mod cache;
 mod config;
 mod errors;
 mod metrics;
@@ -81,13 +82,30 @@ async fn main() -> anyhow::Result<()> {
     if let Some(key) = &opts.rpc_api_key {
         near_rpc_client = near_rpc_client.header(("x-api-key", key))?;
     }
-    let blocks_cache = std::sync::Arc::new(std::sync::RwLock::new(lru::LruCache::new(
-        std::num::NonZeroUsize::new(100000).unwrap(),
-    )));
 
     let final_block = get_final_cache_block(&near_rpc_client)
         .await
         .expect("Error to get final block");
+
+    let limit_memory_cache_in_bytes = if let Some(limit_memory_cache) = opts.limit_memory_cache {
+        Some(gigabytes_to_bytes(limit_memory_cache).await)
+    } else {
+        None
+    };
+    let reserved_memory_in_bytes = gigabytes_to_bytes(opts.reserved_memory).await;
+    let block_cache_size_in_bytes = gigabytes_to_bytes(opts.block_cache_size).await;
+
+    let contract_code_cache_size = utils::calculate_contract_code_cache_sizes(
+        reserved_memory_in_bytes,
+        block_cache_size_in_bytes,
+        limit_memory_cache_in_bytes,
+    )
+    .await;
+
+    let blocks_cache = std::sync::Arc::new(std::sync::RwLock::new(cache::LruMemoryCache::new(
+        block_cache_size_in_bytes,
+    )));
+
     let final_block_height =
         std::sync::Arc::new(std::sync::atomic::AtomicU64::new(final_block.block_height));
     blocks_cache
@@ -95,14 +113,14 @@ async fn main() -> anyhow::Result<()> {
         .unwrap()
         .put(final_block.block_height, final_block);
 
-    let compiled_contract_code_cache = std::sync::Arc::new(CompiledCodeCache {
-        local_cache: std::sync::Arc::new(std::sync::RwLock::new(lru::LruCache::new(
-            std::num::NonZeroUsize::new(128).unwrap(),
+    let compiled_contract_code_cache = std::sync::Arc::new(config::CompiledCodeCache {
+        local_cache: std::sync::Arc::new(std::sync::RwLock::new(cache::LruMemoryCache::new(
+            contract_code_cache_size,
         ))),
     });
-    let contract_code_cache = std::sync::Arc::new(std::sync::RwLock::new(lru::LruCache::new(
-        std::num::NonZeroUsize::new(128).unwrap(),
-    )));
+    let contract_code_cache = std::sync::Arc::new(std::sync::RwLock::new(
+        cache::LruMemoryCache::new(contract_code_cache_size),
+    ));
 
     let scylla_db_manager = std::sync::Arc::new(
         *storage::ScyllaDBManager::new(

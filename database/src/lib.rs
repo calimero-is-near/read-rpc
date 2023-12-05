@@ -244,6 +244,14 @@ impl scylla::retry_policy::RetrySession for CustomRetrySession {
 
 #[async_trait::async_trait]
 pub trait ScyllaStorageManager {
+    async fn new_from_session(
+        scylla_db_session: std::sync::Arc<scylla::Session>,
+    ) -> anyhow::Result<Box<Self>> {
+        tracing::info!("Running migrations into the scylla database...");
+        Self::migrate(&scylla_db_session).await?;
+        Self::prepare(scylla_db_session).await
+    }
+
     async fn new(
         scylla_url: &str,
         scylla_user: Option<&str>,
@@ -265,10 +273,7 @@ pub trait ScyllaStorageManager {
             )
             .await?,
         );
-
-        tracing::info!("Running migrations into the scylla database...");
-        Self::migrate(&scylla_db_session).await?;
-        Self::prepare(scylla_db_session).await
+        Self::new_from_session(scylla_db_session).await
     }
 
     async fn migrate(scylla_db_session: &scylla::Session) -> anyhow::Result<()> {
@@ -310,15 +315,13 @@ pub trait ScyllaStorageManager {
 
     async fn prepare_query(
         scylla_db_session: &std::sync::Arc<scylla::Session>,
-        query_text: &str,
+        mut query: scylla::statement::query::Query,
         consistency: Option<scylla::frame::types::Consistency>,
     ) -> anyhow::Result<PreparedStatement> {
-        let mut query = scylla::statement::query::Query::new(query_text);
-
-        // If `consistency` is not set use `LocalQuorum`
         if let Some(consistency) = consistency {
             query.set_consistency(consistency);
         } else {
+            // set `Consistency::LocalQuorum` as a default consistency
             query.set_consistency(scylla::frame::types::Consistency::LocalQuorum);
         }
 
@@ -343,25 +346,27 @@ pub trait ScyllaStorageManager {
         scylla_db_session: &std::sync::Arc<scylla::Session>,
         query_text: &str,
     ) -> anyhow::Result<PreparedStatement> {
+        let query = scylla::statement::query::Query::new(query_text);
         Self::prepare_query(
             scylla_db_session,
-            query_text,
+            query,
             Some(scylla::frame::types::Consistency::LocalQuorum),
         )
         .await
     }
 
     /// Wrapper to prepare write queries
-    /// Just a simpler way to prepare a query with `Consistency::Any`
+    /// Just a simpler way to prepare a query with `Consistency::LocalQuorum`
     /// we use it as a default consistency for write queries
     async fn prepare_write_query(
         scylla_db_session: &std::sync::Arc<scylla::Session>,
         query_text: &str,
     ) -> anyhow::Result<PreparedStatement> {
+        let query = scylla::statement::query::Query::new(query_text);
         Self::prepare_query(
             scylla_db_session,
-            query_text,
-            Some(scylla::frame::types::Consistency::Any),
+            query,
+            Some(scylla::frame::types::Consistency::LocalQuorum),
         )
         .await
     }
